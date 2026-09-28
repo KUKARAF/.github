@@ -1,0 +1,39 @@
+name: Self-test
+
+# Guards the policy itself: every rule change must keep its fixtures passing
+# (semgrep/*.rs carry `ruleid:` / `ok:` annotations), and this repo's own
+# workflows must pass the same zizmor audit we impose on everyone else.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rules:
+    name: semgrep rule tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate and test rules
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep:1.178.0 sh -c '
+            semgrep --validate --metrics=off --config semgrep/ &&
+            semgrep --test --metrics=off semgrep/'
+
+  workflows:
+    name: zizmor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          min-severity: low
+          version: 1.30.1

@@ -1,0 +1,30 @@
+# Shared cargo-deny policy (KUKARAF/.github templates/deny.toml).
+# Copy into a repo only when it needs repo-specific exceptions; otherwise the
+# security workflow uses this file automatically.
+#
+# Every exception needs a reason and should be revisited - an ignored advisory
+# is a known hole we've decided to live with, not a fixed one.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# Vulnerabilities always fail. Unmaintained crates only fail when we depend
+# on them directly (transitive ones are reported but can't be fixed by us).
+unmaintained = "workspace"
+yanked = "deny"
+ignore = [
+  # { id = "RUSTSEC-0000-0000", reason = "not reachable: we never call X; remove when Y upgrades" },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io. A git dependency must be listed explicitly, pinned by rev.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

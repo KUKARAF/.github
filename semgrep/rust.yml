@@ -1,0 +1,116 @@
+rules:
+  - id: shell-command-spawn
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Spawning a shell interprets its argument as shell syntax; any interpolated
+      data becomes command injection. Call the program directly with one
+      .arg() per argument.
+    pattern-either:
+      - pattern: Command::new("sh")
+      - pattern: Command::new("bash")
+      - pattern: Command::new("zsh")
+      - pattern: Command::new("cmd")
+      - pattern: std::process::Command::new("sh")
+      - pattern: std::process::Command::new("bash")
+      - pattern: tokio::process::Command::new("sh")
+      - pattern: tokio::process::Command::new("bash")
+
+  - id: sql-built-with-format
+    languages: [rust]
+    severity: ERROR
+    message: SQL built with format!() is injectable. Use placeholders and .bind().
+    pattern-either:
+      - pattern: sqlx::query(&format!(...))
+      - pattern: sqlx::query(format!(...).as_str())
+      - pattern: sqlx::query_as(&format!(...))
+      - pattern: sqlx::query_scalar(&format!(...))
+      - pattern: query(&format!(...))
+      - pattern: query_as(&format!(...))
+      - pattern: $CONN.execute(&format!(...), ...)
+
+  - id: websocket-without-message-limit
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      WebSocket upgrade without .max_message_size(); axum's default is 64 MiB
+      per message, so any client can exhaust server memory. Set an explicit limit.
+    patterns:
+      - pattern: $WS.on_upgrade($F)
+      - pattern-not: $W2.max_message_size($N).on_upgrade($F2)
+      - pattern-not: $W2.max_message_size($N).$M(...).on_upgrade($F2)
+      - pattern-not: $W2.$M(...).max_message_size($N).on_upgrade($F2)
+
+  - id: loopback-trusted-as-auth
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      The peer address is loopback-checked to grant trust. Behind any same-host
+      reverse proxy (Caddy, tailscale serve) every request arrives from
+      127.0.0.1, so this is an auth bypass. Authenticate
+      the request itself.
+    patterns:
+      - pattern-either:
+          - pattern: $X.ip().is_loopback()
+          - pattern: $X.is_loopback()
+      - pattern-either:
+          - pattern-inside: $E.get::<ConnectInfo<$T>>().$M(...)
+          - pattern-inside: |
+              async fn $F(..., ConnectInfo($A): ConnectInfo<$T>, ...) -> $R { ... }
+          - pattern-inside: |
+              async fn $F(..., ConnectInfo($A): ConnectInfo<$T>, ...) { ... }
+
+  - id: secret-compared-non-constant-time
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Secret compared with ==/!=, which short-circuits and leaks timing.
+      Use subtle::ConstantTimeEq, or compare hashes of both sides.
+    patterns:
+      - pattern-either:
+          - pattern: $A == $B
+          - pattern: $A != $B
+      - metavariable-regex:
+          metavariable: $A
+          regex: '^(?!.*(hash|digest|len\(\)|is_empty|kind|_type|_ids?\b|_at\b|name|label|prefix)).*$'
+      - metavariable-regex:
+          metavariable: $B
+          regex: '^(?!(.*(hash|digest|len\(\)|kind|_type|_ids?\b|name|label|prefix).*|None|"[^"]*"|\d+|true|false)$).*$'
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $A == $B
+                  - pattern: $A != $B
+              - metavariable-regex:
+                  metavariable: $A
+                  regex: '(?i)^[\w.&*()\[\]]*(token|secret|api_?key|password|passwd|signature|hmac|nonce|presented|provided|supplied|\bsig\b)[\w.&*()\[\]]*$'
+          - patterns:
+              - pattern-either:
+                  - pattern: $A == $B
+                  - pattern: $A != $B
+              - metavariable-regex:
+                  metavariable: $B
+                  regex: '(?i)^[\w.&*()\[\]]*(token|secret|api_?key|password|passwd|signature|hmac|nonce|presented|provided|supplied|\bsig\b)[\w.&*()\[\]]*$'
+    paths:
+      exclude: ["**/tests/**", "**/*_test.rs"]
+
+  - id: html-response-from-format
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      HTML response assembled with format!(): interpolated values are not
+      escaped (XSS). Use an auto-escaping template, or serve text/plain.
+    pattern-either:
+      - pattern: Html(format!(...))
+      - pattern: axum::response::Html(format!(...))
+
+  - id: unbounded-channel
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Unbounded channel: a slow or hostile consumer lets memory grow without
+      limit. Prefer mpsc::channel(N) with backpressure.
+    pattern-either:
+      - pattern: tokio::sync::mpsc::unbounded_channel()
+      - pattern: mpsc::unbounded_channel()
+      - pattern: unbounded_channel()

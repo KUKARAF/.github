@@ -1,0 +1,68 @@
+rules:
+  - id: auth-extractor-identity-ignored
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Handler authenticates the caller but discards who they are (`_`-prefixed
+      binding). Data access must be scoped to the authenticated identity,
+      otherwise any logged-in user acts on someone else's data (IDOR).
+    pattern-regex: |-
+      \b(?!Admin)[A-Z]\w*(Auth|User|Session|Claims)\s*\(\s*_\w*\s*\)\s*:
+    paths:
+      include: ["*.rs"]
+
+  - id: acts-on-arbitrary-user-row
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Query picks "some user" (LIMIT 1 without a bound id) instead of the
+      authenticated caller - every request operates on whichever row comes first.
+    pattern-regex: |-
+      (?i)from\s+users\b(?:(?!=\s*[?$:])[^"'`;])*\blimit\s+1\b
+    paths:
+      include: ["*.rs", "*.sql"]
+
+  - id: innerhtml-unescaped-interpolation
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      innerHTML assigned from a template literal with an unescaped ${...}
+      (XSS). Use textContent, or wrap every interpolation in esc()/escapeHtml().
+    pattern-regex: |-
+      innerHTML\s*\+?=\s*`[^`]*?\$\{(?!\s*(?:esc|escapeHtml|escapeHTML|escape|sanitize)\s*\()
+    paths:
+      include: ["*.js", "*.ts", "*.mjs", "*.html", "*.svelte", "*.vue", "*.jsx", "*.tsx", "*.rs"]
+
+  - id: tauri-csp-disabled
+    languages: [json]
+    severity: ERROR
+    message: >-
+      Tauri CSP is null: any XSS in the webview can call exposed Tauri
+      commands. Set a strict CSP.
+    pattern: |
+      "csp": null
+    paths:
+      include: ["tauri.conf.json", "**/tauri.conf.json"]
+
+  - id: dev-auth-bypass-in-compose
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      A committed compose/env file enables development mode, which in our
+      services disables authentication. Keep dev mode out of deployable config.
+    pattern-regex: |-
+      (?i)\bENV\s*[:=]\s*["']?(dev|development)\b
+    paths:
+      include: ["docker-compose*.yml", "docker-compose*.yaml", "compose*.yml", "compose*.yaml", ".env", ".env.example", "*.env"]
+
+  - id: compose-port-on-all-interfaces
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      Port published on all interfaces (0.0.0.0). Services behind Caddy should
+      bind 127.0.0.1:HOST:CONTAINER or use a shared docker network instead, so the
+      proxy (and its auth, rate limiting, header sanitising) can't be bypassed.
+    pattern-regex: |-
+      (?m)^\s*-\s*["']?\d{2,5}:\d{2,5}(/tcp|/udp)?["']?\s*$
+    paths:
+      include: ["docker-compose*.yml", "docker-compose*.yaml", "compose*.yml", "compose*.yaml"]

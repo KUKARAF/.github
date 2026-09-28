@@ -1,0 +1,188 @@
+name: Security policy
+
+# Reusable, org-wide security gate for KUKARAF repositories.
+#
+# Call it from a repo with (see templates/security.yml):
+#
+#   jobs:
+#     security:
+#       uses: KUKARAF/.github/.github/workflows/security.yml@v1
+#
+# Every job here catches a class of security bug that fmt/build/test/clippy
+# cannot see.
+# A job failing means "a known-exploitable pattern is present", not a style nit.
+# Exceptions are made in the calling repo, never here:
+#   - semgrep:     `// nosemgrep: <rule-id>` on the line, with a reason
+#   - cargo-deny:  `[advisories] ignore = [{ id = "RUSTSEC-...", reason = "..." }]` in deny.toml
+#   - osv-scanner: `osv-scanner.toml` [[IgnoredVulns]] with reason
+#   - zizmor:      `# zizmor: ignore[<audit>]` on the line
+
+on:
+  workflow_call:
+    inputs:
+      rust-dir:
+        description: Directory containing the Cargo workspace root ('' to skip Rust checks)
+        type: string
+        default: "."
+      policy-ref:
+        description: Ref of KUKARAF/.github to load shared rules from (keep in sync with the @ref you call)
+        type: string
+        default: v1
+      skip:
+        description: Space-separated job names to skip (deps, advisories, workflows, secrets, sast, docker, lockfile)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  lockfile:
+    # A gitignored Cargo.lock means every build resolves fresh dependency
+    # versions (unreproducible, and invisible to advisory scanning).
+    if: ${{ !contains(inputs.skip, 'lockfile') && inputs.rust-dir != '' }}
+    name: Cargo.lock committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require a committed Cargo.lock
+        env:
+          RUST_DIR: ${{ inputs.rust-dir }}
+        run: |
+          if [ ! -f "$RUST_DIR/Cargo.lock" ]; then
+            echo "::error file=$RUST_DIR/Cargo.toml::Cargo.lock is not committed. Remove it from .gitignore and commit it; build with --locked."
+            exit 1
+          fi
+
+  deps:
+    # RustSec advisories + crates from unknown registries/git + yanked crates.
+    if: ${{ !contains(inputs.skip, 'deps') && inputs.rust-dir != '' }}
+    name: cargo-deny (advisories, sources, bans)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KUKARAF/.github
+          ref: ${{ inputs.policy-ref }}
+          path: .security-policy
+          persist-credentials: false
+      - name: Use the shared deny.toml unless the repo has its own
+        env:
+          RUST_DIR: ${{ inputs.rust-dir }}
+        run: |
+          if [ ! -f "$RUST_DIR/deny.toml" ]; then
+            cp .security-policy/templates/deny.toml "$RUST_DIR/deny.toml"
+          fi
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: ${{ inputs.rust-dir }}/Cargo.toml
+          command: check
+          command-arguments: advisories bans sources
+
+  advisories:
+    # Every lockfile in the repo, not just Cargo: npm (web frontends),
+    # Gradle (Android), Python. Rust is covered by cargo-deny above but is
+    # scanned here too; ignores live in osv-scanner.toml.
+    if: ${{ !contains(inputs.skip, 'advisories') }}
+    name: osv-scanner (all lockfiles)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan
+        run: |
+          docker run --rm -v "$PWD:/src:ro" ghcr.io/google/osv-scanner:v2.6.0 \
+            scan source --recursive /src
+
+  workflows:
+    # Template injection, unpinned actions, over-broad tokens, cache poisoning
+    # in release jobs, credential persistence.
+    if: ${{ !contains(inputs.skip, 'workflows') }}
+    name: zizmor (GitHub Actions)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          min-severity: medium
+          version: 1.30.1
+
+  secrets:
+    if: ${{ !contains(inputs.skip, 'secrets') }}
+    name: gitleaks (full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan git history
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git /repo --redact --no-banner --exit-code 1
+
+  sast:
+    # Shared semgrep rules (semgrep/ in KUKARAF/.github) + community rulesets.
+    if: ${{ !contains(inputs.skip, 'sast') }}
+    name: semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KUKARAF/.github
+          ref: ${{ inputs.policy-ref }}
+          path: .security-policy
+          persist-credentials: false
+      - name: Scan
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep:1.178.0 \
+            semgrep scan --metrics=off --error --severity ERROR \
+              --exclude .security-policy \
+              --config .security-policy/semgrep \
+              --config p/rust --config p/dockerfile --config p/secrets
+      - name: Warnings (non-blocking)
+        if: always()
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep:1.178.0 \
+            semgrep scan --metrics=off --severity WARNING \
+              --exclude .security-policy \
+              --config .security-policy/semgrep
+
+  docker:
+    # Only runs when the repo has Dockerfiles.
+    if: ${{ !contains(inputs.skip, 'docker') }}
+    name: hadolint (Dockerfiles)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint every Dockerfile
+        run: |
+          mapfile -t files < <(git ls-files '*Dockerfile*' '*.dockerfile')
+          if [ ${#files[@]} -eq 0 ]; then echo "No Dockerfiles."; exit 0; fi
+          rc=0
+          for f in "${files[@]}"; do
+            echo "== $f"
+            docker run --rm -i hadolint/hadolint:v2.14.0 hadolint --failure-threshold error - < "$f" || rc=1
+            # The final stage must drop root.
+            last_from=$(grep -in '^FROM' "$f" | tail -1 | cut -d: -f1)
+            final_user=$(tail -n +"$last_from" "$f" | grep -iE '^USER[[:space:]]' | tail -1 | awk '{print $2}' | cut -d: -f1)
+            if [ -z "$final_user" ] || [ "$final_user" = root ] || [ "$final_user" = 0 ]; then
+              echo "::error file=$f::Final image stage runs as root. Add a non-root USER."
+              rc=1
+            fi
+          done
+          exit $rc
