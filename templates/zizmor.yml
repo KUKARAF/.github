@@ -1,0 +1,11 @@
+# Shared zizmor config. Used automatically unless the repo has its own
+# .github/zizmor.yml (copy this one as the starting point if you need that).
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # Our own policy repo is referenced by its moving major tag (@v1) on
+        # purpose: that's how rule updates reach every repo.
+        "KUKARAF/*": ref-pin
+        # Everything third-party must be pinned to a commit SHA.
+        "*": hash-pin

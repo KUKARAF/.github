@@ -110,11 +110,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KUKARAF/.github
+          ref: ${{ inputs.policy-ref }}
+          path: .security-policy
+          persist-credentials: false
+      - name: Use the shared zizmor config unless the repo has its own
+        run: |
+          if [ ! -f .github/zizmor.yml ] && [ ! -f zizmor.yml ]; then
+            cp .security-policy/templates/zizmor.yml .github/zizmor.yml
+          fi
+          rm -rf .security-policy
       - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
           advanced-security: false
           min-severity: medium
           version: 1.30.1
+          config: .github/zizmor.yml
 
   secrets:
     if: ${{ !contains(inputs.skip, 'secrets') }}
