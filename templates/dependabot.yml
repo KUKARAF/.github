@@ -5,11 +5,13 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 } # don't adopt a release until it's survived a week in the wild
     groups:
       actions: { patterns: ["*"] }
   - package-ecosystem: cargo
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 } # don't adopt a release until it's survived a week in the wild
     open-pull-requests-limit: 5
     groups:
       patch: { update-types: ["patch"] }
